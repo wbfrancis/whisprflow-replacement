@@ -16,6 +16,10 @@ public enum HotkeyError: Error, Equatable {
 /// `.maskAlternate`/`.maskShift`/… flags can't distinguish sides. Bit values are the
 /// `NX_DEVICE{L,R}*KEYMASK` constants from IOKit.
 public struct ModifierKey: Equatable, Sendable, Codable {
+    // Persisted (via synthesized Codable) as these two fields. Both are stable hardware
+    // identities — the keycode and NX device mask of a physical key — so a value stored by
+    // an older build still decodes to the same preset. Don't renumber a preset's mask, or
+    // old persisted settings would decode to a key that matches no choice.
     public let keyCode: CGKeyCode
     let deviceMask: UInt64
 

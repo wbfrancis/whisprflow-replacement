@@ -120,10 +120,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildConfigItems(into menu: NSMenu) {
         let keyMenu = NSMenu()
-        for (index, choice) in ModifierKey.choices.enumerated() {
+        for choice in ModifierKey.choices {
             let item = NSMenuItem(title: choice.name, action: #selector(selectActivationKey(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = index
+            item.representedObject = choice.key  // the value itself, not an index into choices
             keyMenu.addItem(item)
             keyItems.append(item)
         }
@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for (title, mode) in modes {
             let item = NSMenuItem(title: title, action: #selector(selectMode(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = mode.rawValue
+            item.representedObject = mode
             modeMenu.addItem(item)
             modeItems.append(item)
         }
@@ -152,37 +152,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func refreshChecks() {
         for item in keyItems {
-            guard let index = item.representedObject as? Int else { continue }
-            item.state = (ModifierKey.choices[index].key == settings.activationKey) ? .on : .off
+            item.state = (item.representedObject as? ModifierKey == settings.activationKey) ? .on : .off
         }
         for item in modeItems {
-            item.state = (item.representedObject as? String == settings.mode.rawValue) ? .on : .off
+            item.state = (item.representedObject as? Settings.Mode == settings.mode) ? .on : .off
         }
         restoreItem?.state = settings.restoreClipboard ? .on : .off
     }
 
     @objc private func selectActivationKey(_ sender: NSMenuItem) {
-        guard let index = sender.representedObject as? Int else { return }
-        settings.activationKey = ModifierKey.choices[index].key
+        guard let key = sender.representedObject as? ModifierKey else { return }
+        settings.activationKey = key
         persist()
         armHotkey()  // re-tap on the newly chosen key
     }
 
     @objc private func selectMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let mode = Settings.Mode(rawValue: raw) else { return }
+        guard let mode = sender.representedObject as? Settings.Mode else { return }
         settings.mode = mode
-        controller?.settings = settings
         persist()
     }
 
     @objc private func toggleRestore() {
         settings.restoreClipboard.toggle()
-        controller?.settings = settings
         persist()
     }
 
+    /// Save the change and keep every consumer of `settings` in sync: the controller reads
+    /// mode and restore-clipboard live, so it must never hold a stale copy.
     private func persist() {
         settingsStore.save(settings)
+        controller?.settings = settings
         refreshChecks()
     }
 

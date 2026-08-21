@@ -1,3 +1,8 @@
+# Swift build output
+.build/
+*.xcodeproj
+.swiftpm/
+
 # Prototype artifacts — regenerable, keep out of git
 prototype/models/
 prototype/.rec-raw.wav

@@ -32,3 +32,25 @@ public enum MenuBarPresentation {
         return nil
     }
 }
+
+/// Tracks the previous state so the app doesn't have to pair transitions itself. Each
+/// `advance(to:)` returns the icon for the new state and the sound for the step taken to
+/// reach it — keeping the whole state→presentation mapping, transitions included, testable.
+public struct MenuBarPresenter {
+    private var lastState: DictationController.State
+
+    public init(initial: DictationController.State = .idle) {
+        self.lastState = initial
+    }
+
+    public mutating func advance(
+        to state: DictationController.State
+    ) -> (symbol: String, sound: DictationSound?) {
+        let result = (
+            symbol: MenuBarPresentation.symbolName(for: state),
+            sound: MenuBarPresentation.sound(from: lastState, to: state)
+        )
+        lastState = state
+        return result
+    }
+}

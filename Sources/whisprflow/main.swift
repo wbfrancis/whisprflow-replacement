@@ -7,14 +7,20 @@ import DictationKit
 // and subtle start/stop sounds play on the transitions.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// A push-to-talk key event, funnelled through one ordered stream (below) so a fast
+    /// tap can never deliver `ended` before `began`.
+    private enum Activation { case began, ended }
+
+    private let brand = "whisprflow"
     private var statusItem: NSStatusItem?
-    private var statusTitle: NSMenuItem?
+    private var statusLineItem: NSMenuItem?
 
     // Kept alive for the process lifetime: the controller drives the loop, the hotkey feeds
-    // it activations, and the sounds are reused instances.
+    // it activations, the continuation carries key events, and the sounds are reused.
     private var controller: DictationController?
     private var hotkey: CGEventTapHotkeySource?
-    private var lastState: DictationController.State = .idle
+    private var activations: AsyncStream<Activation>.Continuation?
+    private var presenter = MenuBarPresenter()
     private let startSound = NSSound(named: "Tink")
     private let stopSound = NSSound(named: "Pop")
 
@@ -23,9 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setIcon(MenuBarPresentation.symbolName(for: .idle))
 
         let menu = NSMenu()
-        let title = NSMenuItem(title: "whisprflow — starting…", action: nil, keyEquivalent: "")
-        title.isEnabled = false
-        menu.addItem(title)
+        let statusLine = NSMenuItem(title: "\(brand) — starting…", action: nil, keyEquivalent: "")
+        statusLine.isEnabled = false
+        menu.addItem(statusLine)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit whisprflow", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -33,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
 
         statusItem = item
-        statusTitle = title
+        statusLineItem = statusLine
 
         // Assembling the engine is async (it downloads the ~547MB model on first run), so
         // build everything off the launch path and wire the hotkey once it's ready.
@@ -60,13 +66,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Pay the one-time model/Metal warm-up now so the first real dictation isn't slow.
         await controller.warmUp()
 
+        // Serialize key events: the hotkey callbacks only `yield` (synchronous, ordered),
+        // and this single consumer applies them one at a time, so began always precedes its
+        // ended even for a fast tap.
+        let (stream, continuation) = AsyncStream<Activation>.makeStream()
+        self.activations = continuation
+        Task {
+            for await event in stream {
+                switch event {
+                case .began: await controller.activationBegan()
+                case .ended: await controller.activationEnded()
+                }
+            }
+        }
+
         let hotkey = CGEventTapHotkeySource()
-        hotkey.onActivationBegan = { [weak controller] in
-            Task { await controller?.activationBegan() }
-        }
-        hotkey.onActivationEnded = { [weak controller] in
-            Task { await controller?.activationEnded() }
-        }
+        hotkey.onActivationBegan = { [weak self] in self?.activations?.yield(.began) }
+        hotkey.onActivationEnded = { [weak self] in self?.activations?.yield(.ended) }
         do {
             try hotkey.start()
         } catch {
@@ -80,13 +96,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Presentation
 
     private func render(_ state: DictationController.State) {
-        setIcon(MenuBarPresentation.symbolName(for: state))
-        switch MenuBarPresentation.sound(from: lastState, to: state) {
+        let (symbol, sound) = presenter.advance(to: state)
+        setIcon(symbol)
+        switch sound {
         case .start: startSound?.play()
         case .stop: stopSound?.play()
         case nil: break
         }
-        lastState = state
     }
 
     private func setIcon(_ symbolName: String) {
@@ -96,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setStatus(_ text: String) {
-        statusTitle?.title = "whisprflow — \(text)"
+        statusLineItem?.title = "\(brand) — \(text)"
     }
 
     @objc private func quit() {

@@ -5,13 +5,6 @@ public enum AudioCaptureError: Error, Equatable {
     case unsupportedFormat
 }
 
-/// 16kHz mono float — the format whisper.cpp consumes. Captured audio is resampled to this.
-/// `nonisolated(unsafe)`: `AVAudioFormat` isn't `Sendable`, but an instance is immutable
-/// once built, so sharing this one read-only value across threads is safe.
-nonisolated(unsafe) let whisperAudioFormat = AVAudioFormat(
-    commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false
-)!
-
 /// Thread-safe accumulator for captured samples. The mic tap fires on a realtime audio
 /// thread, so appends are lock-guarded and the class is `@unchecked Sendable` to cross
 /// into the tap closure.
@@ -43,7 +36,7 @@ final class AudioResampler: @unchecked Sendable {
     private let source: AVAudioFormat
     private let target: AVAudioFormat
 
-    init?(from source: AVAudioFormat, to target: AVAudioFormat = whisperAudioFormat) {
+    init?(from source: AVAudioFormat, to target: AVAudioFormat = AVAudioEngineAudioSource.whisperFormat) {
         guard let converter = AVAudioConverter(from: source, to: target) else { return nil }
         self.converter = converter
         self.source = source
@@ -53,6 +46,8 @@ final class AudioResampler: @unchecked Sendable {
     /// Convert one input buffer to 16kHz mono samples. Returns `[]` if nothing converted.
     func resample(_ input: AVAudioPCMBuffer) -> [Float] {
         let ratio = target.sampleRate / source.sampleRate
+        // Output capacity = input frames scaled by the rate ratio, plus headroom for the
+        // resampling filter's edge frames, which can push the count slightly past the ratio.
         let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 1024
         guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return [] }
 
@@ -80,6 +75,13 @@ final class AudioResampler: @unchecked Sendable {
 /// "no audio" path.
 @MainActor
 public final class AVAudioEngineAudioSource: AudioSource {
+    /// 16kHz mono float — the format whisper.cpp consumes; captured audio is resampled to
+    /// it. `nonisolated(unsafe)`: `AVAudioFormat` isn't `Sendable`, but an instance is
+    /// immutable once built, so sharing this one read-only value across threads is safe.
+    nonisolated(unsafe) public static let whisperFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false
+    )!
+
     private let engine = AVAudioEngine()
     private let buffer = SampleBuffer()
     private var capturing = false
@@ -96,6 +98,8 @@ public final class AVAudioEngineAudioSource: AudioSource {
             throw AudioCaptureError.unsupportedFormat
         }
 
+        // Bind the buffer to a local so the @Sendable tap closure captures it instead of
+        // `self`, keeping the realtime audio thread off the main actor's state.
         let sink = buffer
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { pcm, _ in
             let samples = resampler.resample(pcm)
@@ -103,7 +107,14 @@ public final class AVAudioEngineAudioSource: AudioSource {
         }
 
         engine.prepare()
-        try engine.start()  // throws if the mic can't be opened (e.g. no permission)
+        do {
+            try engine.start()  // throws if the mic can't be opened (e.g. no permission)
+        } catch {
+            // Start failed, so remove the tap we just installed; otherwise a retry would
+            // hit AVAudioEngine's one-tap-per-bus limit and trap.
+            input.removeTap(onBus: 0)
+            throw error
+        }
         capturing = true
     }
 

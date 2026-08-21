@@ -26,8 +26,8 @@ final class AVAudioEngineAudioSourceTests: XCTestCase {
     // MARK: - Target format
 
     func testWhisperFormatIs16kMono() {
-        XCTAssertEqual(whisperAudioFormat.sampleRate, 16_000)
-        XCTAssertEqual(whisperAudioFormat.channelCount, 1)
+        XCTAssertEqual(AVAudioEngineAudioSource.whisperFormat.sampleRate, 16_000)
+        XCTAssertEqual(AVAudioEngineAudioSource.whisperFormat.channelCount, 1)
     }
 
     // MARK: - Resampling (AC2: 16k mono; AC3: correct non-zero duration)
@@ -40,14 +40,14 @@ final class AVAudioEngineAudioSourceTests: XCTestCase {
         // ~16000 samples out (allow for the converter's edge handling).
         XCTAssertGreaterThan(out.count, 14_000)
         XCTAssertLessThan(out.count, 17_000)
-        let duration = Double(out.count) / whisperAudioFormat.sampleRate
+        let duration = Double(out.count) / AVAudioEngineAudioSource.whisperFormat.sampleRate
         XCTAssertEqual(duration, 1.0, accuracy: 0.1, "1s in should yield ~1s of 16kHz samples")
     }
 
     func testPassesThrough16kMonoUnchanged() {
         let resampler = AudioResampler(from: format(16_000, 1))!
         let out = resampler.resample(buffer(format(16_000, 1), frames: 16_000) { _ in 0.2 })
-        XCTAssertEqual(Double(out.count) / whisperAudioFormat.sampleRate, 1.0, accuracy: 0.05)
+        XCTAssertEqual(Double(out.count) / AVAudioEngineAudioSource.whisperFormat.sampleRate, 1.0, accuracy: 0.05)
     }
 
     func testSignalSurvivesDownsampling() {

@@ -6,6 +6,9 @@ public enum InjectionError: Error, Equatable {
     /// The Accessibility permission needed to synthesize a keystroke isn't granted.
     /// Detectable up front via `PasteboardTextInjector.isAccessibilityGranted`.
     case accessibilityNotGranted
+    /// The paste keystroke couldn't be built or posted, so nothing was inserted. Distinct
+    /// from a missing permission — the caller shouldn't read it as a permissions problem.
+    case keystrokeSynthesisFailed
 }
 
 /// A point-in-time copy of the clipboard, kept so a paste can put the prior contents
@@ -133,15 +136,18 @@ public final class CGEventPasteKeystroke: PasteKeystroke {
     public var accessibilityGranted: Bool { AXIsProcessTrusted() }
 
     public func paste() throws {
-        guard let source = CGEventSource(stateID: .combinedSessionState) else {
-            throw InjectionError.accessibilityNotGranted
-        }
         let vKey: CGKeyCode = 9  // 'v'
-        let down = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
-        down?.flags = .maskCommand
-        let up = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
-        up?.flags = .maskCommand
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
+        else {
+            // Event creation failed; posting nothing would be a silent no-op, so surface it
+            // instead of letting the caller believe the text was pasted.
+            throw InjectionError.keystrokeSynthesisFailed
+        }
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 }

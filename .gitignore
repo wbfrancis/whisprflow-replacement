@@ -1,0 +1,8 @@
+# Prototype artifacts — regenerable, keep out of git
+prototype/models/
+prototype/.rec-raw.wav
+prototype/.rec-16k.wav
+prototype/.rec.txt
+prototype/.whisper.log
+prototype/.say*
+.DS_Store

@@ -15,7 +15,7 @@ public enum HotkeyError: Error, Equatable {
 /// class), so left and right sides of the same modifier are told apart — the generic
 /// `.maskAlternate`/`.maskShift`/… flags can't distinguish sides. Bit values are the
 /// `NX_DEVICE{L,R}*KEYMASK` constants from IOKit.
-public struct ModifierKey: Equatable, Sendable {
+public struct ModifierKey: Equatable, Sendable, Codable {
     public let keyCode: CGKeyCode
     let deviceMask: UInt64
 
@@ -27,6 +27,19 @@ public struct ModifierKey: Equatable, Sendable {
     public static let leftShift    = ModifierKey(keyCode: 56, deviceMask: 0x02)
     public static let rightControl = ModifierKey(keyCode: 62, deviceMask: 0x2000)
     public static let leftControl  = ModifierKey(keyCode: 59, deviceMask: 0x01)
+
+    /// The presets a user can choose between, paired with menu labels.
+    public static let choices: [(name: String, key: ModifierKey)] = [
+        ("Right Option", .rightOption),   ("Left Option", .leftOption),
+        ("Right Command", .rightCommand), ("Left Command", .leftCommand),
+        ("Right Control", .rightControl), ("Left Control", .leftControl),
+        ("Right Shift", .rightShift),     ("Left Shift", .leftShift),
+    ]
+
+    /// Menu label for this key, or a fallback for an unrecognized code.
+    public var displayName: String {
+        Self.choices.first { $0.key == self }?.name ?? "Key \(keyCode)"
+    }
 }
 
 /// Pure decision for the push-to-talk hotkey, separated from the `CGEventTap` plumbing so

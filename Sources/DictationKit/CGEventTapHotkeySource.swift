@@ -10,29 +10,48 @@ public enum HotkeyError: Error, Equatable {
     case eventTapCreationFailed
 }
 
+/// A modifier key usable as the push-to-talk trigger. Carries both the virtual keycode
+/// and the device-dependent flag bit that identifies *this* key (not just its modifier
+/// class), so left and right sides of the same modifier are told apart — the generic
+/// `.maskAlternate`/`.maskShift`/… flags can't distinguish sides. Bit values are the
+/// `NX_DEVICE{L,R}*KEYMASK` constants from IOKit.
+public struct ModifierKey: Equatable, Sendable {
+    public let keyCode: CGKeyCode
+    let deviceMask: UInt64
+
+    public static let rightOption  = ModifierKey(keyCode: 61, deviceMask: 0x40)
+    public static let leftOption   = ModifierKey(keyCode: 58, deviceMask: 0x20)
+    public static let rightCommand = ModifierKey(keyCode: 54, deviceMask: 0x10)
+    public static let leftCommand  = ModifierKey(keyCode: 55, deviceMask: 0x08)
+    public static let rightShift   = ModifierKey(keyCode: 60, deviceMask: 0x04)
+    public static let leftShift    = ModifierKey(keyCode: 56, deviceMask: 0x02)
+    public static let rightControl = ModifierKey(keyCode: 62, deviceMask: 0x2000)
+    public static let leftControl  = ModifierKey(keyCode: 59, deviceMask: 0x01)
+}
+
 /// Pure decision for the push-to-talk hotkey, separated from the `CGEventTap` plumbing so
 /// it can be tested without a live tap. It watches modifier-flag changes and decides when
 /// the configured key (Right Option by default) begins and ends activation.
 ///
 /// "Held alone": activation begins only when the key goes down with no other modifier
-/// (⌘/⌃/⇧) also held, so the hotkey doesn't fire as part of a shortcut chord.
+/// class (⌘/⌃/⇧) also held, so the hotkey doesn't fire as part of a shortcut chord.
 struct HotkeyEvaluator {
     enum Transition: Equatable { case began, ended, none }
 
-    /// Virtual keycode of the activation key. 61 is Right Option (58 is Left Option, so
-    /// keying on the code — not just the ⌥ flag — distinguishes the two sides).
-    let keyCode: Int64
+    let key: ModifierKey
     private(set) var isActive = false
 
     private static let otherModifiers: CGEventFlags = [.maskCommand, .maskControl, .maskShift]
 
-    init(keyCode: Int64) { self.keyCode = keyCode }
+    init(key: ModifierKey) { self.key = key }
 
     /// Feed one `.flagsChanged` event. Returns the resulting transition, if any.
     mutating func handle(keyCode: Int64, flags: CGEventFlags) -> Transition {
-        guard keyCode == self.keyCode else { return .none }
+        guard keyCode == Int64(key.keyCode) else { return .none }
 
-        let keyDown = flags.contains(.maskAlternate)
+        // Whether *this specific* key is down, from its device bit — not the shared
+        // modifier flag, which would still read "down" when the other side is held.
+        let keyDown = (flags.rawValue & key.deviceMask) != 0
         let hasOtherModifiers = !flags.intersection(Self.otherModifiers).isEmpty
 
         if keyDown, !hasOtherModifiers, !isActive {
@@ -62,14 +81,14 @@ public final class CGEventTapHotkeySource: HotkeySource {
     private var runLoopSource: CFRunLoopSource?
 
     /// - Parameters:
-    ///   - keyCode: virtual keycode of the activation key. Default 61 (Right Option).
+    ///   - key: the activation key. Default Right Option.
     ///   - permission: the Accessibility check, injectable so the permission gate is
     ///     testable without touching the real system state.
     public init(
-        keyCode: CGKeyCode = 61,
+        key: ModifierKey = .rightOption,
         permission: @escaping () -> Bool = { AXIsProcessTrusted() }
     ) {
-        self.evaluator = HotkeyEvaluator(keyCode: Int64(keyCode))
+        self.evaluator = HotkeyEvaluator(key: key)
         self.permission = permission
     }
 

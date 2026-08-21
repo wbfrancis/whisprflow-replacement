@@ -44,19 +44,26 @@ public struct CapturedAudio: Equatable, Sendable {
     func stop()
 }
 
-/// User-configurable behavior. Persisted in #8.
-public struct Settings: Equatable, Sendable {
-    public enum Mode: Sendable, Equatable {
+/// User-configurable behavior, persisted across restarts by `SettingsStore`.
+public struct Settings: Equatable, Sendable, Codable {
+    public enum Mode: String, Sendable, Equatable, Codable {
         /// Hold to talk, release to transcribe+insert.
         case pushToTalk
         /// Tap to start, tap again to stop.
         case toggle
     }
 
+    /// The key that triggers dictation. Honored by the hotkey adapter.
+    public var activationKey: ModifierKey
     public var mode: Mode
     public var restoreClipboard: Bool
 
-    public init(mode: Mode = .pushToTalk, restoreClipboard: Bool = true) {
+    public init(
+        activationKey: ModifierKey = .rightOption,
+        mode: Mode = .pushToTalk,
+        restoreClipboard: Bool = true
+    ) {
+        self.activationKey = activationKey
         self.mode = mode
         self.restoreClipboard = restoreClipboard
     }

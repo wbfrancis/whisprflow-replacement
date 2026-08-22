@@ -121,6 +121,8 @@ public final class LocalWhisperEngine: TranscriptionEngine {
                 text += String(cString: segment)
             }
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Rewrite spoken clock times to H:MM ("three o'clock" → 3:00) before returning.
+        return TimeFormatting.format(trimmed)
     }
 }

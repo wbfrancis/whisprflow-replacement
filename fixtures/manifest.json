@@ -2,5 +2,25 @@
   { "file": "audio/fox.aiff",      "expected": "The quick brown fox jumps over the lazy dog" },
   { "file": "audio/count.aiff",    "expected": "123456" },
   { "file": "audio/sentence.aiff", "expected": "please send me the report by tomorrow morning" },
-  { "file": "audio/quiet.aiff",    "expected": "testing a very quiet sentence" }
+  { "file": "audio/quiet.aiff",    "expected": "testing a very quiet sentence" },
+
+  { "file": "audio/Levels A.m4a", "expected": "the meeting is at 3:00 tomorrow" },
+  { "file": "audio/Levels B.m4a", "expected": "the meeting is at 3:00 tomorrow" },
+  { "file": "audio/Levels C.m4a", "expected": "the meeting is at 3:00 tomorrow" },
+  { "file": "audio/Levels D.m4a", "expected": "the meeting is at 3:00 tomorrow" },
+
+  { "file": "audio/Hallucination Triggers A.m4a", "expected": "1 2 3 4 5 6" },
+  { "file": "audio/Hallucination Triggers B.m4a", "expected": "no no no" },
+  { "file": "audio/Hallucination Triggers C.m4a", "expected": "so basically the thing is" },
+  { "file": "audio/Hallucination Triggers D.m4a", "expected": "okay" },
+
+  { "file": "audio/Real Dictation A.m4a", "expected": "let's ship the pull request after review then merge to main" },
+  { "file": "audio/Real Dictation B.m4a", "expected": "email Sarah about the Q3 budget by Friday" },
+  { "file": "audio/Real Dictation C.m4a", "expected": "the API returns a 404 when the token expires" },
+  { "file": "audio/Real Dictation D.m4a", "expected": "they're gonna leave their notes over there" },
+  { "file": "audio/Real Dictation E.m4a", "expected": "refactor the AV Audio Engine tap to be sendable" },
+
+  { "file": "audio/LengthPace A.m4a", "expected": "cancel that" },
+  { "file": "audio/LengthPace B.m4a", "expected": "I didn't really know but I could have been much more safe and also I could have gone to bed sooner" },
+  { "file": "audio/LengthPace C.m4a", "expected": "the quick brown fox" }
 ]

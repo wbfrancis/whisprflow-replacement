@@ -3,6 +3,12 @@ import AVFoundation
 import ApplicationServices
 import DictationKit
 
+/// Echo a lifecycle line to the terminal so behavior is visible when run via `swift run`
+/// (the menu status line isn't). Prefixed for easy grepping.
+func log(_ message: String) {
+    FileHandle.standardError.write(Data("[whisprflow] \(message)\n".utf8))
+}
+
 /// Real permission probes for the menu-bar agent. The decisions about what's missing and
 /// what to say live in the tested `PermissionsPresentation`; this just reads system state.
 @MainActor
@@ -94,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = await permissions.requestMicrophone()
         }
         let state = permissions.state()
+        log("permissions: microphone=\(state.microphone), accessibility=\(state.accessibilityGranted)")
         if !PermissionsPresentation.isReady(state) {
             if let summary = PermissionsPresentation.summary(state) { setStatus(summary) }
             presentFirstRun(state)
@@ -161,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.activations = continuation
         Task {
             for await event in stream {
+                log("hotkey \(event)")
                 switch event {
                 case .began: await controller.activationBegan()
                 case .ended: await controller.activationEnded()
@@ -295,6 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setStatus(_ text: String) {
         statusLineItem?.title = "\(brand) — \(text)"
+        log(text)
     }
 
     @objc private func quit() {

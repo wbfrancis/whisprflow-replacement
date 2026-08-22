@@ -6,7 +6,7 @@ import DictationKit
 /// Echo a lifecycle line to the terminal so behavior is visible when run via `swift run`
 /// (the menu status line isn't). Prefixed for easy grepping.
 func log(_ message: String) {
-    FileHandle.standardError.write(Data("[whisprflow] \(message)\n".utf8))
+    FileHandle.standardError.write(Data("[whisper] \(message)\n".utf8))
 }
 
 /// Real permission probes for the menu-bar agent. The decisions about what's missing and
@@ -31,6 +31,16 @@ final class SystemPermissions {
     /// Show the one-time system microphone prompt (no-op if already decided).
     func requestMicrophone() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
+    /// Ask the system to add this app to the Accessibility list. Non-blocking: it shows
+    /// the standard "…would like to control this computer" dialog (with an Open System
+    /// Settings button) and returns right away, so it never stalls launch the way a modal
+    /// on the boot path does. No-op once granted.
+    func promptAccessibility() {
+        // The literal value of `kAXTrustedCheckOptionPrompt`; used directly because that
+        // imported global isn't concurrency-safe to reference under Swift 6.
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
 }
 
@@ -58,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // it activations, the continuation carries key events, and the sounds are reused.
     private var controller: DictationController?
     private var hotkey: CGEventTapHotkeySource?
+    private var accessibilityRetry: Task<Void, Never>?
     private var activations: AsyncStream<Activation>.Continuation?
     private var presenter = MenuBarPresenter()
     private let startSound = NSSound(named: "Tink")
@@ -109,40 +120,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let state = permissions.state()
         log("permissions: microphone=\(state.microphone), accessibility=\(state.accessibilityGranted)")
-        if !PermissionsPresentation.isReady(state) {
-            if let summary = PermissionsPresentation.summary(state) { setStatus(summary) }
-            presentFirstRun(state)
+        // Prompt for Accessibility if it's missing — but never block boot on it. The old
+        // code ran a modal here, which on a menu-bar (.accessory) app can fail to surface
+        // and leave launch hung at "starting…". Instead we fire the non-blocking system
+        // prompt and always assemble; armHotkey then polls until the grant lands, so the
+        // hotkey starts working the moment Accessibility is enabled — no relaunch needed.
+        if !state.accessibilityGranted {
+            permissions.promptAccessibility()
         }
+        if let summary = PermissionsPresentation.summary(state) { setStatus(summary) }
         await assemble()
-    }
-
-    /// A minimal first-run window explaining the missing permissions, with a deep-link
-    /// button per one straight to its System Settings pane.
-    private func presentFirstRun(_ state: PermissionsState) {
-        let missing = PermissionsPresentation.missing(state)
-        let alert = NSAlert()
-        alert.messageText = "Enable whisper"
-        alert.informativeText = missing
-            .map { PermissionsPresentation.instruction(for: $0) }
-            .joined(separator: "\n\n")
-        for permission in missing {
-            alert.addButton(withTitle: "Open \(permission.displayName) Settings")
-        }
-        alert.addButton(withTitle: "Continue")
-
-        NSApp.activate(ignoringOtherApps: true)
-        // Buttons are added in `missing` order, then Continue; map the response back.
-        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-        if missing.indices.contains(index) {
-            openSettings(for: missing[index])
-        }
-    }
-
-    private func openSettings(for permission: Permission) {
-        let pane = permission == .microphone ? "Privacy_Microphone" : "Privacy_Accessibility"
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     private func assemble() async {
@@ -198,11 +185,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try hotkey.start()
         } catch {
             self.hotkey = nil
-            setStatus("hold-to-talk off — grant Accessibility, then relaunch")
+            setStatus("hold-to-talk off — enable whisper under Accessibility (starts automatically once you do)")
+            scheduleAccessibilityRetry()
             return
         }
         self.hotkey = hotkey
+        accessibilityRetry?.cancel()
+        accessibilityRetry = nil
         setStatus("ready — hold \(settings.activationKey.displayName) to dictate")
+    }
+
+    /// Poll for the Accessibility grant, then arm the hotkey — so enabling whisper in
+    /// System Settings takes effect immediately instead of needing a relaunch. Idle cost
+    /// is one boolean check a second, only while the grant is still missing.
+    private func scheduleAccessibilityRetry() {
+        guard accessibilityRetry == nil else { return }
+        accessibilityRetry = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self else { return }
+                if self.permissions.accessibilityGranted {
+                    self.armHotkey()  // arms and clears this retry
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - Config menu

@@ -38,11 +38,11 @@ final class FeedbackLogTests: XCTestCase {
         XCTAssertTrue(try log.append("second note", at: epoch))
 
         let contents = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(contents.hasPrefix("# whisprflow feedback"))
+        XCTAssertTrue(contents.hasPrefix("# whisper feedback"))
         XCTAssertTrue(contents.contains("first note"))
         XCTAssertTrue(contents.contains("second note"))
         // Header appears once; the second append doesn't re-write it.
-        XCTAssertEqual(contents.components(separatedBy: "# whisprflow feedback").count - 1, 1)
+        XCTAssertEqual(contents.components(separatedBy: "# whisper feedback").count - 1, 1)
     }
 
     func testAppendOfBlankNoteWritesNothing() throws {

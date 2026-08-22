@@ -7,7 +7,7 @@ import Foundation
 /// so it's testable without touching disk.
 public struct FeedbackLog {
     /// The Markdown file notes are appended to. Defaults to
-    /// `~/Library/Application Support/whisprflow/feedback.md`.
+    /// `~/Library/Application Support/whisper/feedback.md`.
     public let fileURL: URL
 
     public init(fileURL: URL? = nil) {
@@ -16,7 +16,7 @@ public struct FeedbackLog {
         } else {
             let appSupport = FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            self.fileURL = appSupport.appendingPathComponent("whisprflow/feedback.md", isDirectory: false)
+            self.fileURL = appSupport.appendingPathComponent("whisper/feedback.md", isDirectory: false)
         }
     }
 
@@ -50,7 +50,7 @@ public struct FeedbackLog {
             try handle.seekToEnd()
             try handle.write(contentsOf: Data(entry.utf8))
         } else {
-            let header = "# whisprflow feedback\n\n"
+            let header = "# whisper feedback\n\n"
             try Data((header + entry).utf8).write(to: fileURL)
         }
         return true

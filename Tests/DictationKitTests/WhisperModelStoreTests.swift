@@ -6,7 +6,7 @@ final class WhisperModelStoreTests: XCTestCase {
     func testDefaultDirectoryIsUnderApplicationSupport() {
         let store = WhisperModelStore()
         XCTAssertTrue(store.directory.path.contains("Application Support"))
-        XCTAssertTrue(store.directory.path.hasSuffix("whisprflow/models"))
+        XCTAssertTrue(store.directory.path.hasSuffix("whisper/models"))
     }
 
     func testModelURLUsesTheTurboFileName() {
@@ -15,7 +15,7 @@ final class WhisperModelStoreTests: XCTestCase {
     }
 
     func testCustomDirectoryIsHonoured() {
-        let dir = URL(fileURLWithPath: "/tmp/whisprflow-test-models")
+        let dir = URL(fileURLWithPath: "/tmp/whisper-test-models")
         let store = WhisperModelStore(directory: dir)
         XCTAssertEqual(store.directory, dir)
         XCTAssertEqual(store.modelURL, dir.appendingPathComponent("ggml-large-v3-turbo-q5_0.bin"))

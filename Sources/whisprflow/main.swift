@@ -90,36 +90,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func bootstrap() async {
         // Show the system mic prompt once if the user hasn't decided yet.
-        if permissions.microphone == .notDetermined {
+        if PermissionsPresentation.shouldRequestMicrophone(permissions.state()) {
             _ = await permissions.requestMicrophone()
         }
         let state = permissions.state()
         if !PermissionsPresentation.isReady(state) {
-            setStatus(PermissionsPresentation.summary(state) ?? "grant permissions to start")
+            if let summary = PermissionsPresentation.summary(state) { setStatus(summary) }
             presentFirstRun(state)
         }
         await assemble()
     }
 
-    /// A minimal first-run window explaining the missing permissions, with a button that
-    /// deep-links to the Accessibility pane (Microphone is handled by the system prompt).
+    /// A minimal first-run window explaining the missing permissions, with a deep-link
+    /// button per one straight to its System Settings pane.
     private func presentFirstRun(_ state: PermissionsState) {
+        let missing = PermissionsPresentation.missing(state)
         let alert = NSAlert()
         alert.messageText = "Enable whisprflow"
-        alert.informativeText = PermissionsPresentation.missing(state)
+        alert.informativeText = missing
             .map { PermissionsPresentation.instruction(for: $0) }
             .joined(separator: "\n\n")
-        alert.addButton(withTitle: "Open Accessibility Settings")
+        for permission in missing {
+            alert.addButton(withTitle: "Open \(permission.displayName) Settings")
+        }
         alert.addButton(withTitle: "Continue")
 
         NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
-            openAccessibilitySettings()
+        // Buttons are added in `missing` order, then Continue; map the response back.
+        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        if missing.indices.contains(index) {
+            openSettings(for: missing[index])
         }
     }
 
-    private func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+    private func openSettings(for permission: Permission) {
+        let pane = permission == .microphone ? "Privacy_Microphone" : "Privacy_Accessibility"
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
             NSWorkspace.shared.open(url)
         }
     }
@@ -277,8 +283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             setStatus("ready — hold \(settings.activationKey.displayName) to dictate")
         case .noAudio:
             setStatus("no speech detected — try again")
-        case .failed:
-            setStatus(PermissionsPresentation.summary(permissions.state()) ?? "dictation failed — try again")
+        case .failed(let reason):
+            // A missing permission is the usual cause; name it. Otherwise keep the reason.
+            setStatus(PermissionsPresentation.summary(permissions.state()) ?? "dictation failed — \(reason)")
         case .idle:
             break
         }

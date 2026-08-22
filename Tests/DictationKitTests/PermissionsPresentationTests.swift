@@ -52,4 +52,19 @@ final class PermissionsPresentationTests: XCTestCase {
         XCTAssertFalse(ax.isEmpty)
         XCTAssertNotEqual(mic, ax)
     }
+
+    func testDisplayNames() {
+        XCTAssertEqual(Permission.microphone.displayName, "Microphone")
+        XCTAssertEqual(Permission.accessibility.displayName, "Accessibility")
+    }
+
+    // MARK: - Microphone prompt gating
+
+    func testRequestMicrophoneOnlyWhenNotDetermined() {
+        XCTAssertTrue(PermissionsPresentation.shouldRequestMicrophone(state(.notDetermined, false)))
+        XCTAssertFalse(PermissionsPresentation.shouldRequestMicrophone(state(.granted, false)),
+                       "already granted: don't re-prompt")
+        XCTAssertFalse(PermissionsPresentation.shouldRequestMicrophone(state(.denied, false)),
+                       "denied can't be re-prompted; it needs System Settings")
+    }
 }

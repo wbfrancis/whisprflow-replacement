@@ -5,6 +5,22 @@ public enum AudioCaptureError: Error, Equatable {
     case unsupportedFormat
 }
 
+/// A tiny thread-safe boolean the realtime tap reads to know when to collect samples.
+/// Lock-guarded and `@unchecked Sendable` so it can cross into the tap closure.
+final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var on = false
+
+    var value: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return on
+    }
+
+    func set(_ newValue: Bool) {
+        lock.lock(); on = newValue; lock.unlock()
+    }
+}
+
 /// Thread-safe accumulator for captured samples. The mic tap fires on a realtime audio
 /// thread, so appends are lock-guarded and the class is `@unchecked Sendable` to cross
 /// into the tap closure.
@@ -69,10 +85,14 @@ final class AudioResampler: @unchecked Sendable {
 }
 
 /// `AudioSource` over `AVAudioEngine`. Taps the mic, resamples to 16kHz mono, and hands
-/// the samples to the engine on stop. Samples are accumulated in memory as `[Float]`, so
-/// there's no WAV header to finalize — the prototype's zero-length-file bug can't recur;
-/// an empty capture is simply an empty sample array, which drives the controller's
-/// "no audio" path.
+/// the samples over on stop. Samples are accumulated in memory as `[Float]`, so there's no
+/// WAV header to finalize — the prototype's zero-length-file bug can't recur; an empty
+/// capture is simply an empty sample array, which drives the controller's "no audio" path.
+///
+/// The engine is started once and kept running (see `prewarm`), and each utterance just
+/// toggles collection on and off. Starting the engine cold on every key-down added enough
+/// latency to clip the first word, so the mic is held hot instead. The cost is that the
+/// mic stays active — and macOS shows its in-use indicator — for the whole session.
 @MainActor
 public final class AVAudioEngineAudioSource: AudioSource {
     /// 16kHz mono float — the format whisper.cpp consumes; captured audio is resampled to
@@ -84,13 +104,32 @@ public final class AVAudioEngineAudioSource: AudioSource {
 
     private let engine = AVAudioEngine()
     private let buffer = SampleBuffer()
-    private var capturing = false
+    private let collecting = Flag()
+    private var running = false
 
     public init() {}
 
+    /// Start the mic engine ahead of first use so the first key-down has no cold-start
+    /// latency. Safe to call at launch; the first real capture reuses the hot engine.
+    public func prewarm() throws {
+        try ensureRunning()
+    }
+
     public func startCapture() throws {
-        guard !capturing else { return }
-        _ = buffer.drain()  // discard anything left from a prior capture
+        try ensureRunning()   // no-op once hot; retries if a prior prewarm was blocked
+        _ = buffer.drain()    // discard anything left from a prior capture
+        collecting.set(true)
+    }
+
+    public func stopCapture() async -> CapturedAudio {
+        guard running else { return CapturedAudio(samples: []) }
+        collecting.set(false)
+        return CapturedAudio(samples: buffer.drain())
+    }
+
+    /// Install the tap and start the engine once; keep both hot for the session. Idempotent.
+    private func ensureRunning() throws {
+        guard !running else { return }
 
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -98,13 +137,17 @@ public final class AVAudioEngineAudioSource: AudioSource {
             throw AudioCaptureError.unsupportedFormat
         }
 
-        // Bind the buffer to a local so the @Sendable tap closure captures it instead of
-        // `self`, keeping the realtime audio thread off the main actor's state.
+        // The tap fires on the realtime audio thread, so the block is `@Sendable` (never
+        // main-actor isolated) and captures only Sendable values — the collection gate, the
+        // resampler, and the sample sink — never `self`.
         let sink = buffer
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { pcm, _ in
+        let gate = collecting
+        let block: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { pcm, _ in
+            guard gate.value else { return }   // drop buffers outside an utterance
             let samples = resampler.resample(pcm)
             if !samples.isEmpty { sink.append(samples) }
         }
+        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat, block: block)
 
         engine.prepare()
         do {
@@ -115,14 +158,6 @@ public final class AVAudioEngineAudioSource: AudioSource {
             input.removeTap(onBus: 0)
             throw error
         }
-        capturing = true
-    }
-
-    public func stopCapture() async -> CapturedAudio {
-        guard capturing else { return CapturedAudio(samples: []) }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        capturing = false
-        return CapturedAudio(samples: buffer.drain())
+        running = true
     }
 }

@@ -66,11 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsStore = SettingsStore()
     private var settings = Settings()
     private let permissions = SystemPermissions()
+    private let feedbackLog = FeedbackLog()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = settingsStore.load()  // sync + fast; ready before assembly builds anything
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = item  // set before setIcon: it reads statusItem?.button, so the idle icon shows at launch
         setIcon(MenuBarPresentation.symbolName(for: .idle))
 
         let menu = NSMenu()
@@ -80,12 +82,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         buildConfigItems(into: menu)
         menu.addItem(.separator())
+        let addFeedback = NSMenuItem(title: "Add Feedback…", action: #selector(addFeedback), keyEquivalent: "")
+        addFeedback.target = self
+        menu.addItem(addFeedback)
+        let openFeedback = NSMenuItem(title: "Open Feedback Log", action: #selector(openFeedbackLog), keyEquivalent: "")
+        openFeedback.target = self
+        menu.addItem(openFeedback)
+        menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit whisprflow", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
         item.menu = menu
 
-        statusItem = item
         statusLineItem = statusLine
         refreshChecks()
 
@@ -304,6 +312,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setStatus(_ text: String) {
         statusLineItem?.title = "\(brand) — \(text)"
         log(text)
+    }
+
+    // MARK: - Feedback log
+
+    /// Prompt for a note and append it to the feedback log. A multi-line text view is the
+    /// accessory so a longer thought fits; Enter inserts a newline, the Save button commits.
+    @objc private func addFeedback() {
+        let alert = NSAlert()
+        alert.messageText = "Add feedback"
+        alert.informativeText = "Jot a note for the next round of improvements. Saved to the feedback log."
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 96))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let textView = NSTextView(frame: scroll.bounds)
+        textView.autoresizingMask = [.width, .height]
+        textView.font = .systemFont(ofSize: 13)
+        textView.isRichText = false
+        scroll.documentView = textView
+        alert.accessoryView = scroll
+
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = textView
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            let saved = try feedbackLog.append(textView.string)
+            setStatus(saved ? "feedback saved" : "ready — hold \(settings.activationKey.displayName) to dictate")
+        } catch {
+            setStatus("couldn't save feedback — \(error.localizedDescription)")
+        }
+    }
+
+    /// Open the feedback log in the default handler, revealing it in Finder if it's empty
+    /// (nothing jotted yet), so the user always lands somewhere sensible.
+    @objc private func openFeedbackLog() {
+        let url = feedbackLog.fileURL
+        if FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
+        }
     }
 
     @objc private func quit() {

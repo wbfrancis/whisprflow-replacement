@@ -139,8 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        let audio = AVAudioEngineAudioSource()
+        try? audio.prewarm()  // hold the mic hot so the first key-down doesn't clip the first word
         let controller = DictationController(
-            audio: AVAudioEngineAudioSource(),
+            audio: audio,
             engine: engine,
             injector: PasteboardTextInjector(),
             settings: settings

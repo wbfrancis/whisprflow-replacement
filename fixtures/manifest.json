@@ -1,0 +1,6 @@
+[
+  { "file": "audio/fox.aiff",      "expected": "The quick brown fox jumps over the lazy dog" },
+  { "file": "audio/count.aiff",    "expected": "123456" },
+  { "file": "audio/sentence.aiff", "expected": "please send me the report by tomorrow morning" },
+  { "file": "audio/quiet.aiff",    "expected": "testing a very quiet sentence" }
+]

@@ -31,6 +31,12 @@ let package = Package(
             name: "whisprflow",
             dependencies: ["DictationKit"]
         ),
+        // Offline eval harness: transcribes the audio fixtures and scores each against its
+        // expected text, so trim/decoding changes can be tuned by the numbers.
+        .executableTarget(
+            name: "eval",
+            dependencies: ["DictationKit"]
+        ),
         .testTarget(
             name: "DictationKitTests",
             dependencies: ["DictationKit"]

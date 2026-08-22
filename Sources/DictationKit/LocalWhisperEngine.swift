@@ -42,11 +42,16 @@ public final class LocalWhisperEngine: TranscriptionEngine {
     }
 
     public func transcribe(_ audio: CapturedAudio) async throws -> String {
-        try loadIfNeeded()
         // Cut trailing silence first — whisper hallucinates a continuation to fill it
         // (e.g. "1 2 3 4 5 6" → "…7 8 9 10").
-        let samples = SilenceTrim.trimmingTrailingSilence(audio.samples)
-        guard !samples.isEmpty else { return "" }  // all silence → no-audio path
+        try await transcribeRaw(SilenceTrim.trimmingTrailingSilence(audio.samples))
+    }
+
+    /// Transcribe 16kHz mono samples with no silence trimming applied. The eval harness
+    /// uses this so it can apply (and tune) the trim itself.
+    public func transcribeRaw(_ samples: [Float]) async throws -> String {
+        try loadIfNeeded()
+        guard !samples.isEmpty else { return "" }  // nothing to transcribe → no-audio path
         return try run(samples: samples)
     }
 

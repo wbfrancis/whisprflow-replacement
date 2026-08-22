@@ -3,12 +3,14 @@ import XCTest
 
 final class SilenceTrimTests: XCTestCase {
 
-    /// A block of "speech": a tone loud enough to clear the RMS threshold.
+    /// A block of "speech": a tone at a given amplitude.
     private func tone(_ count: Int, amplitude: Float = 0.3) -> [Float] {
         (0..<count).map { amplitude * sinf(2 * .pi * 300 * Float($0) / 16_000) }
     }
 
     private func silence(_ count: Int) -> [Float] { [Float](repeating: 0, count: count) }
+
+    private let pad = 4_800  // must match SilenceTrim's default
 
     func testEmptyStaysEmpty() {
         XCTAssertEqual(SilenceTrim.trimmingTrailingSilence([]), [])
@@ -23,8 +25,7 @@ final class SilenceTrimTests: XCTestCase {
         let input = tone(8_000) + silence(32_000)
         let out = SilenceTrim.trimmingTrailingSilence(input)
         XCTAssertLessThan(out.count, input.count)
-        // Speech (8000) plus the 200ms pad (3200) — well under the full 40000.
-        XCTAssertLessThanOrEqual(out.count, 8_000 + 3_200 + 320)
+        XCTAssertLessThanOrEqual(out.count, 8_000 + pad + 320)
         XCTAssertGreaterThanOrEqual(out.count, 8_000, "the speech itself must survive")
     }
 
@@ -39,5 +40,16 @@ final class SilenceTrimTests: XCTestCase {
         let input = silence(8_000) + tone(8_000)
         let out = SilenceTrim.trimmingTrailingSilence(input)
         XCTAssertEqual(out.count, input.count)
+    }
+
+    func testQuietSpeechSurvivesInsteadOfTrimmingToEmpty() {
+        // A whisper-level utterance (low amplitude) then silence. The adaptive threshold
+        // must judge silence relative to this clip's own peak, so the quiet speech is kept
+        // rather than mistaken for silence and discarded.
+        let input = tone(8_000, amplitude: 0.02) + silence(16_000)
+        let out = SilenceTrim.trimmingTrailingSilence(input)
+        XCTAssertFalse(out.isEmpty, "quiet speech must not be trimmed away entirely")
+        XCTAssertGreaterThanOrEqual(out.count, 8_000)
+        XCTAssertLessThan(out.count, input.count, "its trailing silence should still be cut")
     }
 }

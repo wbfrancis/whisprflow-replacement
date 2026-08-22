@@ -32,6 +32,10 @@ public final class DictationController {
     /// start/stop sounds.
     public var onStateChange: ((State) -> Void)?
 
+    /// Fires once at the end of each activation cycle with its result. The app uses it to
+    /// surface a clear message — e.g. a failure from a missing mic permission at use time.
+    public var onOutcome: ((Outcome) -> Void)?
+
     private let audio: AudioSource
     private let engine: TranscriptionEngine
     private let injector: TextInjector
@@ -129,6 +133,7 @@ public final class DictationController {
     /// here so the outcome and the idle reset can never drift apart.
     private func finish(_ outcome: Outcome) {
         lastOutcome = outcome
+        onOutcome?(outcome)
         state = .idle
     }
 }

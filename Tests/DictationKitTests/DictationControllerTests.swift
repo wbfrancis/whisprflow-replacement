@@ -56,6 +56,32 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertEqual(engine.lastAudio, CapturedAudio(samples: [1, 2, 3, 4]))
     }
 
+    // MARK: - Outcome callback
+
+    func testOnOutcomeFiresWithInjectedText() async {
+        let (c, _, engine, _) = makeController()
+        engine.result = "hello world"
+        var outcomes: [DictationController.Outcome] = []
+        c.onOutcome = { outcomes.append($0) }
+
+        await c.activationBegan()
+        await c.activationEnded()
+
+        XCTAssertEqual(outcomes, [.injected("hello world")])
+    }
+
+    func testOnOutcomeReportsCaptureFailure() async {
+        let (c, audio, _, _) = makeController()
+        audio.startError = TestError()  // e.g. the mic can't be opened (no permission)
+        var outcomes: [DictationController.Outcome] = []
+        c.onOutcome = { outcomes.append($0) }
+
+        await c.activationBegan()
+
+        XCTAssertEqual(outcomes.count, 1)
+        if case .failed = outcomes.first { } else { XCTFail("expected a .failed outcome, got \(outcomes)") }
+    }
+
     // MARK: - Toggle
 
     func testToggle_firstTapStartsSecondTapStops() async {

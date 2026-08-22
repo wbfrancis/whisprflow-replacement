@@ -1,5 +1,32 @@
 import AppKit
+import AVFoundation
+import ApplicationServices
 import DictationKit
+
+/// Real permission probes for the menu-bar agent. The decisions about what's missing and
+/// what to say live in the tested `PermissionsPresentation`; this just reads system state.
+@MainActor
+final class SystemPermissions {
+    var microphone: AuthStatus {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: return .granted
+        case .denied, .restricted: return .denied
+        case .notDetermined: return .notDetermined
+        @unknown default: return .denied
+        }
+    }
+
+    var accessibilityGranted: Bool { AXIsProcessTrusted() }
+
+    func state() -> PermissionsState {
+        PermissionsState(microphone: microphone, accessibilityGranted: accessibilityGranted)
+    }
+
+    /// Show the one-time system microphone prompt (no-op if already decided).
+    func requestMicrophone() async -> Bool {
+        await AVCaptureDevice.requestAccess(for: .audio)
+    }
+}
 
 // The menu-bar agent. Assembles the real adapters (mic capture, local whisper, pasteboard
 // injection, the activation hotkey) into the DictationController, so holding the activation
@@ -32,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let settingsStore = SettingsStore()
     private var settings = Settings()
+    private let permissions = SystemPermissions()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = settingsStore.load()  // sync + fast; ready before assembly builds anything
@@ -55,9 +83,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusLineItem = statusLine
         refreshChecks()
 
-        // Assembling the engine is async (it downloads the ~547MB model on first run), so
-        // build everything off the launch path and wire the hotkey once it's ready.
-        Task { await assemble() }
+        // Off the launch path: run the first-run permission flow, then assemble (which
+        // downloads the ~547MB model on first run).
+        Task { await bootstrap() }
+    }
+
+    private func bootstrap() async {
+        // Show the system mic prompt once if the user hasn't decided yet.
+        if permissions.microphone == .notDetermined {
+            _ = await permissions.requestMicrophone()
+        }
+        let state = permissions.state()
+        if !PermissionsPresentation.isReady(state) {
+            setStatus(PermissionsPresentation.summary(state) ?? "grant permissions to start")
+            presentFirstRun(state)
+        }
+        await assemble()
+    }
+
+    /// A minimal first-run window explaining the missing permissions, with a button that
+    /// deep-links to the Accessibility pane (Microphone is handled by the system prompt).
+    private func presentFirstRun(_ state: PermissionsState) {
+        let alert = NSAlert()
+        alert.messageText = "Enable whisprflow"
+        alert.informativeText = PermissionsPresentation.missing(state)
+            .map { PermissionsPresentation.instruction(for: $0) }
+            .joined(separator: "\n\n")
+        alert.addButton(withTitle: "Open Accessibility Settings")
+        alert.addButton(withTitle: "Continue")
+
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            openAccessibilitySettings()
+        }
+    }
+
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func assemble() async {
@@ -76,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settings
         )
         controller.onStateChange = { [weak self] state in self?.render(state) }
+        controller.onOutcome = { [weak self] outcome in self?.report(outcome) }
         self.controller = controller
 
         // Pay the one-time model/Metal warm-up now so the first real dictation isn't slow.
@@ -202,6 +267,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Dictation")
         button.image?.isTemplate = true
+    }
+
+    /// Turn each dictation result into a status-line message. A failure most often means a
+    /// permission went missing at use time (e.g. mic denied), so name what's still needed.
+    private func report(_ outcome: DictationController.Outcome) {
+        switch outcome {
+        case .injected:
+            setStatus("ready — hold \(settings.activationKey.displayName) to dictate")
+        case .noAudio:
+            setStatus("no speech detected — try again")
+        case .failed:
+            setStatus(PermissionsPresentation.summary(permissions.state()) ?? "dictation failed — try again")
+        case .idle:
+            break
+        }
     }
 
     private func setStatus(_ text: String) {

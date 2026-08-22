@@ -86,4 +86,24 @@ final class TimeFormattingTests: XCTestCase {
         XCTAssertEqual(f("please send me the report by tomorrow morning"),
                        "please send me the report by tomorrow morning")
     }
+
+    // MARK: - Text preservation around a match
+
+    func testLeadingAndTrailingPunctuationPreserved() {
+        XCTAssertEqual(f("(quarter past four)"), "(4:15)")
+        XCTAssertEqual(f("\"three o'clock\""), "\"3:00\"")
+    }
+
+    func testWhitespaceOutsideMatchPreserved() {
+        // The double space before "three" must survive; only the matched span changes.
+        XCTAssertEqual(f("hello  world at three o'clock"), "hello  world at 3:00")
+    }
+
+    func testNewlinePreserved() {
+        XCTAssertEqual(f("first line\nmeet at three o'clock"), "first line\nmeet at 3:00")
+    }
+
+    func testCurlyApostropheOClock() {
+        XCTAssertEqual(f("meet at three o\u{2019}clock"), "meet at 3:00")
+    }
 }

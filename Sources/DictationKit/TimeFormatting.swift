@@ -2,27 +2,53 @@
 /// "three twenty" → 3:20, "quarter past four" → 4:15, "ten to six" → 5:50. Times only: bare
 /// numbers ("404", "four hundred", "three dollars") are left untouched.
 ///
+/// Everything outside a matched time — whitespace runs, newlines, surrounding punctuation —
+/// is preserved exactly; only the matched span is replaced. Because "hour + minutes" is a
+/// real spoken time, a few phrases are inherently ambiguous and will convert: "three twenty
+/// dollars" → "3:20 dollars", "nine eleven" → "9:11". That's the cost of honoring
+/// "three twenty" → 3:20; it's rare in dictation and accepted here.
+///
 /// A pure text transform, run on the transcript before it's pasted, and covered by the eval
 /// harness (the Levels fixtures expect "3:00").
 public enum TimeFormatting {
     public static func format(_ text: String) -> String {
-        let raw = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        guard !raw.isEmpty else { return text }
-        let clean = raw.map(cleaned)
+        let tokens = tokenize(text)
+        guard !tokens.isEmpty else { return text }
+        let clean = tokens.map { cleaned($0.raw) }
 
-        var out: [String] = []
+        // Rebuild by copying the original text verbatim between matches and replacing only
+        // the matched spans — so whitespace and punctuation outside a time are untouched.
+        var result = ""
+        var cursor = text.startIndex
         var i = 0
-        while i < raw.count {
-            if let match = matchTime(clean, at: i) {
-                // Reattach any trailing punctuation from the last token the match consumed.
-                out.append(match.formatted + trailingPunctuation(raw[i + match.length - 1]))
-                i += match.length
-            } else {
-                out.append(raw[i])
-                i += 1
-            }
+        while i < tokens.count {
+            guard let match = matchTime(clean, at: i) else { i += 1; continue }
+            let first = tokens[i], last = tokens[i + match.length - 1]
+            result += text[cursor..<first.start]
+            result += leadingPunctuation(first.raw) + match.formatted + trailingPunctuation(last.raw)
+            cursor = last.end
+            i += match.length
         }
-        return out.joined(separator: " ")
+        result += text[cursor...]
+        return result
+    }
+
+    // MARK: - Tokens
+
+    private struct Token { let raw: String; let start: String.Index; let end: String.Index }
+
+    /// Split into maximal non-whitespace runs, each with its range in the original string.
+    private static func tokenize(_ text: String) -> [Token] {
+        var tokens: [Token] = []
+        var i = text.startIndex
+        while i < text.endIndex {
+            while i < text.endIndex, text[i].isWhitespace { i = text.index(after: i) }
+            guard i < text.endIndex else { break }
+            let start = i
+            while i < text.endIndex, !text[i].isWhitespace { i = text.index(after: i) }
+            tokens.append(Token(raw: String(text[start..<i]), start: start, end: i))
+        }
+        return tokens
     }
 
     // MARK: - Matching
@@ -138,12 +164,22 @@ public enum TimeFormatting {
     private static func pad(_ n: Int) -> String { n < 10 ? "0\(n)" : "\(n)" }
 
     /// Lowercased, with leading/trailing punctuation stripped (keeps the apostrophe in
-    /// "o'clock" and internal hyphens).
+    /// "o'clock" and internal hyphens). A curly apostrophe is normalized to straight so
+    /// "o’clock" still matches.
     private static func cleaned(_ s: String) -> String {
-        var t = Substring(s.lowercased())
+        var t = Substring(s.lowercased().replacingOccurrences(of: "\u{2019}", with: "'"))
         while let f = t.first, !(f.isLetter || f.isNumber) { t = t.dropFirst() }
         while let l = t.last, !(l.isLetter || l.isNumber) { t = t.dropLast() }
         return String(t)
+    }
+
+    private static func leadingPunctuation(_ s: String) -> String {
+        var prefix = ""
+        for ch in s {
+            if ch.isLetter || ch.isNumber { break }
+            prefix += String(ch)
+        }
+        return prefix
     }
 
     private static func trailingPunctuation(_ s: String) -> String {

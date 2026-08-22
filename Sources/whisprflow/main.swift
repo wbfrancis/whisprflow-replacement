@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// tap can never deliver `ended` before `began`.
     private enum Activation { case began, ended }
 
-    private let brand = "whisprflow"
+    private let brand = "whisper"
     private var statusItem: NSStatusItem?
     private var statusLineItem: NSMenuItem?
 
@@ -89,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openFeedback.target = self
         menu.addItem(openFeedback)
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit whisprflow", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit whisper", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
         item.menu = menu
@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func presentFirstRun(_ state: PermissionsState) {
         let missing = PermissionsPresentation.missing(state)
         let alert = NSAlert()
-        alert.messageText = "Enable whisprflow"
+        alert.messageText = "Enable whisper"
         alert.informativeText = missing
             .map { PermissionsPresentation.instruction(for: $0) }
             .joined(separator: "\n\n")

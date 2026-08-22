@@ -11,3 +11,6 @@ prototype/.rec.txt
 prototype/.whisper.log
 prototype/.say*
 .DS_Store
+
+# App bundle output (regenerable via scripts/bundle.sh)
+build/

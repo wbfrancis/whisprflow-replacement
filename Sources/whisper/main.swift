@@ -6,7 +6,7 @@ import DictationKit
 /// Echo a lifecycle line to the terminal so behavior is visible when run via `swift run`
 /// (the menu status line isn't). Prefixed for easy grepping.
 func log(_ message: String) {
-    FileHandle.standardError.write(Data("[whisprflow] \(message)\n".utf8))
+    FileHandle.standardError.write(Data("[whisper] \(message)\n".utf8))
 }
 
 /// Real permission probes for the menu-bar agent. The decisions about what's missing and
@@ -32,6 +32,16 @@ final class SystemPermissions {
     func requestMicrophone() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
+
+    /// Ask the system to add this app to the Accessibility list. Non-blocking: it shows
+    /// the standard "…would like to control this computer" dialog (with an Open System
+    /// Settings button) and returns right away, so it never stalls launch the way a modal
+    /// on the boot path does. No-op once granted.
+    func promptAccessibility() {
+        // The literal value of `kAXTrustedCheckOptionPrompt`; used directly because that
+        // imported global isn't concurrency-safe to reference under Swift 6.
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
 }
 
 // The menu-bar agent. Assembles the real adapters (mic capture, local whisper, pasteboard
@@ -45,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// tap can never deliver `ended` before `began`.
     private enum Activation { case began, ended }
 
-    private let brand = "whisprflow"
+    private let brand = "whisper"
     private var statusItem: NSStatusItem?
     private var statusLineItem: NSMenuItem?
 
@@ -58,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // it activations, the continuation carries key events, and the sounds are reused.
     private var controller: DictationController?
     private var hotkey: CGEventTapHotkeySource?
+    private var accessibilityRetry: Task<Void, Never>?
     private var activations: AsyncStream<Activation>.Continuation?
     private var presenter = MenuBarPresenter()
     private let startSound = NSSound(named: "Tink")
@@ -66,11 +77,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsStore = SettingsStore()
     private var settings = Settings()
     private let permissions = SystemPermissions()
+    private let feedbackLog = FeedbackLog()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = settingsStore.load()  // sync + fast; ready before assembly builds anything
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = item  // set before setIcon: it reads statusItem?.button, so the idle icon shows at launch
         setIcon(MenuBarPresentation.symbolName(for: .idle))
 
         let menu = NSMenu()
@@ -80,12 +93,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         buildConfigItems(into: menu)
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit whisprflow", action: #selector(quit), keyEquivalent: "q")
+        let addFeedback = NSMenuItem(title: "Add Feedback…", action: #selector(addFeedback), keyEquivalent: "")
+        addFeedback.target = self
+        menu.addItem(addFeedback)
+        let openFeedback = NSMenuItem(title: "Open Feedback Log", action: #selector(openFeedbackLog), keyEquivalent: "")
+        openFeedback.target = self
+        menu.addItem(openFeedback)
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "Quit whisper", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
         item.menu = menu
 
-        statusItem = item
         statusLineItem = statusLine
         refreshChecks()
 
@@ -101,40 +120,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let state = permissions.state()
         log("permissions: microphone=\(state.microphone), accessibility=\(state.accessibilityGranted)")
-        if !PermissionsPresentation.isReady(state) {
-            if let summary = PermissionsPresentation.summary(state) { setStatus(summary) }
-            presentFirstRun(state)
+        // Prompt for Accessibility if it's missing — but never block boot on it. The old
+        // code ran a modal here, which on a menu-bar (.accessory) app can fail to surface
+        // and leave launch hung at "starting…". Instead we fire the non-blocking system
+        // prompt and always assemble; armHotkey then polls until the grant lands, so the
+        // hotkey starts working the moment Accessibility is enabled — no relaunch needed.
+        if !state.accessibilityGranted {
+            permissions.promptAccessibility()
         }
+        if let summary = PermissionsPresentation.summary(state) { setStatus(summary) }
         await assemble()
-    }
-
-    /// A minimal first-run window explaining the missing permissions, with a deep-link
-    /// button per one straight to its System Settings pane.
-    private func presentFirstRun(_ state: PermissionsState) {
-        let missing = PermissionsPresentation.missing(state)
-        let alert = NSAlert()
-        alert.messageText = "Enable whisprflow"
-        alert.informativeText = missing
-            .map { PermissionsPresentation.instruction(for: $0) }
-            .joined(separator: "\n\n")
-        for permission in missing {
-            alert.addButton(withTitle: "Open \(permission.displayName) Settings")
-        }
-        alert.addButton(withTitle: "Continue")
-
-        NSApp.activate(ignoringOtherApps: true)
-        // Buttons are added in `missing` order, then Continue; map the response back.
-        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-        if missing.indices.contains(index) {
-            openSettings(for: missing[index])
-        }
-    }
-
-    private func openSettings(for permission: Permission) {
-        let pane = permission == .microphone ? "Privacy_Microphone" : "Privacy_Accessibility"
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     private func assemble() async {
@@ -190,11 +185,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try hotkey.start()
         } catch {
             self.hotkey = nil
-            setStatus("hold-to-talk off — grant Accessibility, then relaunch")
+            setStatus("hold-to-talk off — enable whisper under Accessibility (starts automatically once you do)")
+            scheduleAccessibilityRetry()
             return
         }
         self.hotkey = hotkey
+        accessibilityRetry?.cancel()
+        accessibilityRetry = nil
         setStatus("ready — hold \(settings.activationKey.displayName) to dictate")
+    }
+
+    /// Poll for the Accessibility grant, then arm the hotkey — so enabling whisper in
+    /// System Settings takes effect immediately instead of needing a relaunch. Idle cost
+    /// is one boolean check a second, only while the grant is still missing.
+    private func scheduleAccessibilityRetry() {
+        guard accessibilityRetry == nil else { return }
+        accessibilityRetry = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self else { return }
+                if self.permissions.accessibilityGranted {
+                    self.armHotkey()  // arms and clears this retry
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - Config menu
@@ -304,6 +319,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setStatus(_ text: String) {
         statusLineItem?.title = "\(brand) — \(text)"
         log(text)
+    }
+
+    // MARK: - Feedback log
+
+    /// Prompt for a note and append it to the feedback log. A multi-line text view is the
+    /// accessory so a longer thought fits; Enter inserts a newline, the Save button commits.
+    @objc private func addFeedback() {
+        let alert = NSAlert()
+        alert.messageText = "Add feedback"
+        alert.informativeText = "Jot a note for the next round of improvements. Saved to the feedback log."
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 96))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let textView = NSTextView(frame: scroll.bounds)
+        textView.autoresizingMask = [.width, .height]
+        textView.font = .systemFont(ofSize: 13)
+        textView.isRichText = false
+        scroll.documentView = textView
+        alert.accessoryView = scroll
+
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = textView
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            let saved = try feedbackLog.append(textView.string)
+            setStatus(saved ? "feedback saved" : "ready — hold \(settings.activationKey.displayName) to dictate")
+        } catch {
+            setStatus("couldn't save feedback — \(error.localizedDescription)")
+        }
+    }
+
+    /// Open the feedback log in the default handler, revealing it in Finder if it's empty
+    /// (nothing jotted yet), so the user always lands somewhere sensible.
+    @objc private func openFeedbackLog() {
+        let url = feedbackLog.fileURL
+        if FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
+        }
     }
 
     @objc private func quit() {

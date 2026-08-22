@@ -62,9 +62,9 @@ public enum PermissionsPresentation {
     public static func instruction(for permission: Permission) -> String {
         switch permission {
         case .microphone:
-            return "Microphone access lets whisprflow hear your dictation."
+            return "Microphone access lets whisper hear your dictation."
         case .accessibility:
-            return "Accessibility access lets whisprflow paste at the cursor and use the hold-to-talk key."
+            return "Accessibility access lets whisper paste at the cursor and use the hold-to-talk key."
         }
     }
 

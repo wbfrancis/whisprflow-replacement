@@ -20,14 +20,14 @@ public struct WhisperModelStore: Sendable {
 
     public let directory: URL
 
-    /// Defaults to `~/Library/Application Support/whisprflow/models`.
+    /// Defaults to `~/Library/Application Support/whisper/models`.
     public init(directory: URL? = nil) {
         if let directory {
             self.directory = directory
         } else {
             let appSupport = FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            self.directory = appSupport.appendingPathComponent("whisprflow/models", isDirectory: true)
+            self.directory = appSupport.appendingPathComponent("whisper/models", isDirectory: true)
         }
     }
 

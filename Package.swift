@@ -8,7 +8,7 @@ let whisperInclude = "-I/opt/homebrew/include"
 let whisperLibDir = "-L/opt/homebrew/lib"
 
 let package = Package(
-    name: "whisprflow",
+    name: "whisper",
     platforms: [.macOS("14.6")],
     targets: [
         // C shim exposing the whisper.cpp C API to Swift, linked in-process so the
@@ -28,7 +28,7 @@ let package = Package(
             swiftSettings: [.unsafeFlags(["-Xcc", whisperInclude])]
         ),
         .executableTarget(
-            name: "whisprflow",
+            name: "whisper",
             dependencies: ["DictationKit"]
         ),
         // Offline eval harness: transcribes the audio fixtures and scores each against its

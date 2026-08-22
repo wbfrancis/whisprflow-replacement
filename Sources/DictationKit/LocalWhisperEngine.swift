@@ -43,7 +43,11 @@ public final class LocalWhisperEngine: TranscriptionEngine {
 
     public func transcribe(_ audio: CapturedAudio) async throws -> String {
         try loadIfNeeded()
-        return try run(samples: audio.samples)
+        // Cut trailing silence first — whisper hallucinates a continuation to fill it
+        // (e.g. "1 2 3 4 5 6" → "…7 8 9 10").
+        let samples = SilenceTrim.trimmingTrailingSilence(audio.samples)
+        guard !samples.isEmpty else { return "" }  // all silence → no-audio path
+        return try run(samples: samples)
     }
 
     // MARK: - whisper.cpp
@@ -86,6 +90,17 @@ public final class LocalWhisperEngine: TranscriptionEngine {
         params.print_timestamps = false
         params.no_timestamps = true
         params.n_threads = Int32(max(1, ProcessInfo.processInfo.activeProcessorCount - 2))
+
+        // Anti-hallucination: a push-to-talk clip is one short utterance, so force a single
+        // segment and don't carry context between calls; suppress non-speech tokens; and
+        // keep decoding deterministic (no temperature fallback that can wander into a
+        // plausible-but-wrong continuation).
+        params.single_segment = true
+        params.no_context = true
+        params.suppress_blank = true
+        params.suppress_nst = true
+        params.temperature = 0.0
+        params.temperature_inc = 0.0
 
         let status: Int32 = "en".withCString { lang in
             params.language = lang
